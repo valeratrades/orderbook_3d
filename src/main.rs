@@ -1,7 +1,7 @@
 #![feature(trivial_bounds)]
 use std::{str::FromStr, sync::Arc};
 
-use aggr_orderbook::{Book, BookOrders, Market, Symbol};
+use aggr_orderbook::{Book, BookOrders, ListenBuilder, Market, Symbol};
 use bevy::prelude::*;
 use bevy_editor_pls::prelude::*;
 use tokio::{sync::mpsc, task::JoinSet};
@@ -79,7 +79,7 @@ async fn book_listen() {
 	let symbol = Symbol::new(Market::BinancePerp, "BTCUSDT".to_owned());
 	todo!("need a way to get the receiver");
 	let (tx, rx) = mpsc::channel(65536);
-	Book::listen(symbol, tx).await.unwrap();
+	ListenBuilder::new(symbol).data_dir("./examples/data/").listen(tx).await.unwrap();
 	unreachable!();
 }
 
