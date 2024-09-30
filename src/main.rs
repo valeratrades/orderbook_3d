@@ -1,5 +1,5 @@
 #![feature(trivial_bounds)]
-use std::str::FromStr;
+use std::{str::FromStr, sync::atomic::{AtomicUsize, Ordering}};
 
 use aggr_orderbook::{BookOrders, ListenBuilder, Market, Symbol};
 use bevy::prelude::*;
@@ -7,7 +7,7 @@ use bevy_editor_pls::prelude::*;
 use tokio::sync::mpsc;
 use v_utils::io::{confirm, Percent};
 
-static mut COUNTER: usize = 0; // HACK
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 
 #[tokio::main]
@@ -32,10 +32,10 @@ fn write_frame(
 	mut camera_query: Query<(&Camera, &mut Transform)>,
 ) {
 	while let Ok(orders) = receiver.0.try_recv() {
-		// SAFETY: suck it bevy
-		unsafe { COUNTER  += 1 };
+		COUNTER.fetch_add(1, Ordering::Relaxed);
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
-		let (bids, asks) = orders.to_plottable(Some(p), false);
+		let (bids, asks) = orders.to_plottable(Some(p), true); //dbg: want aggregate = false
+		dbg!(&bids);
 
 		fn to_log(v: Vec<f32>) -> Vec<f32> {
 			let first = v[0]; //NB: smallest value for both, internal promise
@@ -65,8 +65,7 @@ fn write_frame(
 
 		let camera = camera_query.single_mut();
 		let (_, mut transform) = camera;
-		// SAFETY: suck it bevy (why is this unsafe, btw?)
-		transform.translation = Vec3::new(0., 4., range * 1.5 + unsafe {COUNTER as f32});
+		transform.translation = Vec3::new(0., 4., range * 1.5 + COUNTER.load(Ordering::SeqCst) as f32);
 
 		confirm("Continue?"); //dbg
 	}
