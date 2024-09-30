@@ -37,13 +37,13 @@ fn write_frame(
 	mut camera_query: Query<(&Camera, &mut Transform), With<MainCamera>>,
 ) {
 	while let Ok(orders) = receiver.0.try_recv() {
-		COUNTER.fetch_add(1, Ordering::Relaxed);
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
 		let (bids, asks) = orders.to_plottable(Some(p), true); //dbg: want aggregate = false
 		if bids.0.is_empty() && asks.0.is_empty() {
 			eprintln!("[WARN] Empty orderbook slice. Consider increasing the depth.");
 			continue;
 		}
+		COUNTER.fetch_add(1, Ordering::Relaxed);
 
 		fn to_log(v: Vec<f32>) -> Vec<f32> {
 			let first = v[0]; //NB: smallest value for both, internal promise
@@ -59,7 +59,7 @@ fn write_frame(
 			commands.spawn(PbrBundle {
 				mesh: meshes.add(Cuboid::new(range / 1000., y, 1.0)),
 				material: materials.add(Color::hsl(hsl.0, hsl.1, hsl.2)),
-				transform: Transform::from_xyz(x, y / 2., 0.0),
+				transform: Transform::from_xyz(x, y / 2., COUNTER.load(Ordering::SeqCst) as f32),
 				..default()
 			});
 		};
@@ -74,8 +74,6 @@ fn write_frame(
 		let camera = camera_query.single_mut();
 		let (_, mut transform) = camera;
 		transform.translation = Vec3::new(0., 4., range * 1.5 + COUNTER.load(Ordering::SeqCst) as f32);
-
-		//confirm("Continue?"); //dbg
 	}
 }
 
@@ -89,14 +87,6 @@ async fn book_listen(tx: mpsc::Sender<BookOrders>) {
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
 	let (tx, rx) = mpsc::channel(65536);
 	commands.insert_resource(Receiver(rx));
-
-	// cube
-	commands.spawn(PbrBundle {
-		mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-		material: materials.add(Color::srgb_u8(124, 144, 255)),
-		transform: Transform::from_xyz(0.0, 0.5, -1.0),
-		..default()
-	});
 
 	// circle base
 	commands.spawn(PbrBundle {
