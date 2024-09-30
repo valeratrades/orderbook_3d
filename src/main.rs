@@ -77,8 +77,9 @@ async fn write_frame(
 
 async fn book_listen() {
 	let symbol = Symbol::new(Market::BinancePerp, "BTCUSDT".to_owned());
+	todo!("need a way to get the receiver");
 	let (tx, rx) = mpsc::channel(65536);
-	Book::listen(symbol, tx).unwrap().await;
+	Book::listen(symbol, tx).await.unwrap();
 	unreachable!();
 }
 
