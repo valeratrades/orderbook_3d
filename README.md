@@ -17,7 +17,9 @@
 <!-- markdownlint-restore -->
 
 ## Usage
-TODO
+```sh
+cargo run
+```
 
 <br>
 
