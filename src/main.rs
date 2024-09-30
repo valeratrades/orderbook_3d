@@ -75,10 +75,8 @@ async fn write_frame(
 	}
 }
 
-async fn book_listen() {
+async fn book_listen(tx: mpsc::Sender<BookOrders>) {
 	let symbol = Symbol::new(Market::BinancePerp, "BTCUSDT".to_owned());
-	todo!("need a way to get the receiver");
-	let (tx, rx) = mpsc::channel(65536);
 	ListenBuilder::new(symbol).data_dir("./examples/data/").listen(tx).await.unwrap();
 	unreachable!();
 }
@@ -113,4 +111,14 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		transform: Transform::from_xyz(0., 0., 0.).looking_at(Vec3::ZERO, Vec3::Y),
 		..default()
 	});
+
+	std::thread::scope(|s| {
+		s.spawn(|_| {
+			tokio::runtime::Builder::new_multi_thread()
+				.enable_all()
+				.build()
+				.unwrap()
+				.block_on(book_listen(tx));
+		});
+	})
 }
