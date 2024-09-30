@@ -5,6 +5,8 @@
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/valeratrades/orderbook_3d/ci.yml?branch=master&style=for-the-badge&style=flat-square" height="20">](https://github.com/valeratrades/orderbook_3d/actions?query=branch%3Amaster) <!--NB: Won't find it if repo is private-->
 ![Lines Of Code](https://img.shields.io/badge/LoC-176-lightblue)
 
+![Book](./docs/.assets/book.png)
+
 <!-- markdownlint-disable -->
 <details>
   <summary>
