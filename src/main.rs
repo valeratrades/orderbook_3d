@@ -5,13 +5,14 @@ use std::{
 };
 
 use aggr_orderbook::{BookOrders, ListenBuilder, Market, Symbol};
-use bevy::{color::palettes::css::WHITE, prelude::*, render::camera::PerspectiveProjection};
+use bevy::{color::palettes::css::WHITE, prelude::*, render::camera::PerspectiveProjection, window::PrimaryWindow};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use tokio::sync::mpsc;
 use v_utils::io::Percent;
 
 static N_ROWS_DRAWN: AtomicUsize = AtomicUsize::new(0);
+static RANGE_MULTIPLIER: f32 = 1.5;
 
 #[tokio::main]
 async fn main() {
@@ -23,6 +24,7 @@ async fn main() {
 		.add_systems(Startup, setup)
 		.add_systems(Update, write_frame)
 		.add_systems(Update, center_camera.run_if(input_just_pressed(KeyCode::Escape)))
+		.add_systems(Update, set_rotation_center.run_if(input_just_pressed(KeyCode::Space)))
 		.run();
 }
 
@@ -32,17 +34,58 @@ struct Shared{
 	asks_material_handle: Handle<StandardMaterial>,
 	bids_material_handle: Handle<StandardMaterial>,
 	cuboid_mesh_handle: Handle<Mesh>,
+	last_row_width: f32,
+	last_row_height: f32,
 }
 
-fn center_camera(mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>) {
+fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
 	let camera = camera_query.single_mut();
-	let (_, mut transform) = camera;
-	transform.translation = Vec3::new(0., 4., 0.);
+	let (entity, _, mut transform) = camera;
+
+	transform.translation = Vec3::new(0., shared.last_row_height, shared.last_row_width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32);
+	transform.look_at(Vec3::ZERO, Vec3::Y);
+
+	commands.entity(entity).insert(PanOrbitCamera::default());
+}
+
+fn set_rotation_center(
+	mut commands: Commands,
+	q_window: Query<&Window, With<PrimaryWindow>>,
+	mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>,
+) {
+	let (camera_entity, camera, mut panorbit, camera_transform) = q_camera.single_mut();
+
+	let window = q_window.single();
+
+	if let Some(ray) = window.cursor_position()
+		.and_then(|cursor| camera.viewport_to_world(camera_transform, cursor))
+	{
+
+		let ray_origin = ray.origin;
+		let distance_to_plane = match ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::default()) {
+			Some(distance) => distance,
+			None => return,
+		};
+		let new_focus_target = ray_origin + ray.direction * distance_to_plane;
+
+		//- get current camera position and orientation
+		//- override the panorbit wtih same transform and new target_focus
+
+		panorbit.target_focus = new_focus_target;
+		panorbit.force_update = true;
+
+		//commands.entity(camera_entity).insert(PanOrbitCamera{
+		//	transform: camera_transform.clone(),
+		//	target_focus: new_focus_target,
+		//	focus: new_focus_target,
+		//	..default()
+		//});
+	}
 }
 
 fn write_frame(
-	mut shared: ResMut<Shared>,
 	mut commands: Commands,
+	mut shared: ResMut<Shared>,
 	mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>,
 ) {
 	while let Ok(orders) = shared.receiver.try_recv() {
@@ -56,6 +99,11 @@ fn write_frame(
 
 		let mid_price = (bids.0[0] + asks.0[0]) / 2.;
 		let range = asks.0[asks.0.len() - 1] - bids.0[bids.0.len() - 1];
+		shared.last_row_width = range;
+
+		let max_y_bids = bids.1.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		let max_y_asks = asks.1.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		shared.last_row_height = max_y_bids.max(*max_y_asks);
 
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial> | {
 			commands.spawn(PbrBundle {
@@ -77,7 +125,7 @@ fn write_frame(
 		let (_, mut transform) = camera;
 		let current_camera_pos = transform.translation;
 		if current_camera_pos.x == 0. {
-			transform.translation = Vec3::new(0., 4., range * 1.5 + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32);
+			transform.translation = Vec3::new(0., shared.last_row_height, shared.last_row_width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32);
 		}
 	}
 }
@@ -96,6 +144,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		asks_material_handle: materials.add(Color::hsl(0.3, 0.5, 0.5)),
 		bids_material_handle: materials.add(Color::hsl(109.0, 0.97, 0.88)),
 		cuboid_mesh_handle: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+		last_row_width: 0.,
+		last_row_height: 0.,
 	};
 	commands.insert_resource(shared);
 
