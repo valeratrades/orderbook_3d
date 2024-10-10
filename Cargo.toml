@@ -17,7 +17,7 @@ undocumented_unsafe_blocks = "warn"
 
 [dependencies]
 aggr_orderbook = { path = "/home/v/s/aggr_orderbook" }
-bevy = "0.14.2"
+bevy = "^0.14.2"
 bevy_panorbit_camera = { version = "0.19.3" } #, features = ["bevy_egui"] }
 color-eyre = "^0.6.3"
 derive-new = "^0.7.0"

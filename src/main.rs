@@ -5,14 +5,23 @@ use std::{
 };
 
 use aggr_orderbook::{BookOrders, ListenBuilder, Market, Symbol};
-use bevy::{color::palettes::css::WHITE, prelude::*, render::camera::PerspectiveProjection, window::PrimaryWindow};
-use bevy::input::common_conditions::input_just_pressed;
+use bevy::{
+	color::palettes::css::{RED, WHITE},
+	input::common_conditions::input_just_pressed,
+	prelude::*,
+	render::camera::PerspectiveProjection,
+	sprite::Anchor,
+	text::{BreakLineOn, Text2dBounds},
+	window::PrimaryWindow,
+};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use tokio::sync::mpsc;
 use v_utils::io::Percent;
 
 static N_ROWS_DRAWN: AtomicUsize = AtomicUsize::new(0);
 static RANGE_MULTIPLIER: f32 = 1.5;
+static FONT: &str = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf";
+
 
 #[tokio::main]
 async fn main() {
@@ -29,7 +38,7 @@ async fn main() {
 }
 
 #[derive(Debug, Resource)]
-struct Shared{
+struct Shared {
 	receiver: mpsc::Receiver<BookOrders>,
 	asks_material_handle: Handle<StandardMaterial>,
 	bids_material_handle: Handle<StandardMaterial>,
@@ -48,19 +57,12 @@ fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_quer
 	commands.entity(entity).insert(PanOrbitCamera::default());
 }
 
-fn set_rotation_center(
-	mut commands: Commands,
-	q_window: Query<&Window, With<PrimaryWindow>>,
-	mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>,
-) {
+fn set_rotation_center(mut commands: Commands, q_window: Query<&Window, With<PrimaryWindow>>, mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>) {
 	let (camera_entity, camera, mut panorbit, camera_transform) = q_camera.single_mut();
 
 	let window = q_window.single();
 
-	if let Some(ray) = window.cursor_position()
-		.and_then(|cursor| camera.viewport_to_world(camera_transform, cursor))
-	{
-
+	if let Some(ray) = window.cursor_position().and_then(|cursor| camera.viewport_to_world(camera_transform, cursor)) {
 		let ray_origin = ray.origin;
 		let distance_to_plane = match ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::default()) {
 			Some(distance) => distance,
@@ -83,11 +85,7 @@ fn set_rotation_center(
 	}
 }
 
-fn write_frame(
-	mut commands: Commands,
-	mut shared: ResMut<Shared>,
-	mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>,
-) {
+fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>) {
 	while let Ok(orders) = shared.receiver.try_recv() {
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
 		let (bids, asks) = orders.to_plottable(Some(p), true, true);
@@ -105,7 +103,7 @@ fn write_frame(
 		let max_y_asks = asks.1.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
 		shared.last_row_height = max_y_bids.max(*max_y_asks);
 
-		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial> | {
+		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
 				material: material_handle,
@@ -137,7 +135,10 @@ async fn book_listen(tx: mpsc::Sender<BookOrders>) {
 	unreachable!();
 }
 
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+#[derive(Debug, Default, Component)]
+struct Ruler;
+
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, asset_server: Res<AssetServer>) {
 	let (tx, rx) = mpsc::channel(65536);
 	let shared = Shared {
 		receiver: rx,
@@ -163,6 +164,43 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		},
 		PanOrbitCamera::default(),
 	));
+
+	commands
+		.spawn(NodeBundle {
+			style: Style {
+				width: Val::Percent(100.0),
+				height: Val::Percent(100.0),
+				justify_content: JustifyContent::SpaceBetween,
+				..default()
+			},
+			..default()
+		})
+		.with_children(|parent| {
+			parent.spawn((
+				TextBundle::from_section(
+					"target text",
+					TextStyle {
+						font: asset_server.load(FONT),
+						..default()
+					},
+				),
+				Label,
+			));
+		});
+
+
+	// ruler
+	let ruler_width = 25.0;
+	let num_labels = 10;
+	let label_spacing = ruler_width / (num_labels as f32 - 1.0);
+	commands
+		.spawn(PbrBundle {
+			mesh: meshes.add(Cuboid::new(ruler_width, 0.1, 5.)),
+			material: materials.add(Color::srgb(0.8, 0.8, 0.8)),
+			transform: Transform::from_xyz(0.0, 0.0, -1.0),
+			..default()
+		})
+		.insert(Ruler);
 
 	std::thread::spawn(move || {
 		let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
