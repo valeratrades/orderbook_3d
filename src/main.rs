@@ -35,19 +35,31 @@ struct Shared {
 	asks_material_handle: Handle<StandardMaterial>,
 	bids_material_handle: Handle<StandardMaterial>,
 	cuboid_mesh_handle: Handle<Mesh>,
-	last_row_width: f32,
-	last_row_height: f32,
-	last_midprice: f32,
+	first_row_properties: Option<RowProperties>,
+	last_row_properties: RowProperties,
 }
 
+#[derive(Clone, Debug, Default, derive_new::new, Copy)]
+struct RowProperties {
+	width: f32,
+	height_2std_upper: f32,
+	midprice: f32,
+}
+
+//TODO!!: call at the end of drawing frames
 fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
+	if let Some(first_row_properties) = shared.first_row_properties {
 	let camera = camera_query.single_mut();
 	let (entity, _, mut transform) = camera;
 
-	transform.translation = Vec3::new(0., shared.last_row_height, shared.last_row_width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32);
+	transform.translation = Vec3::new(
+		shared.last_row_properties.midprice - first_row_properties.midprice,
+		shared.last_row_properties.height_2std_upper,
+		shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32,
+	);
 	transform.look_at(Vec3::ZERO, Vec3::Y);
-
 	commands.entity(entity).insert(PanOrbitCamera::default());
+	}
 }
 
 /// None if cursor is outside of the window or doesn't intersect with the Y0 plane
@@ -68,11 +80,18 @@ fn cursor_y0_intersection(window: &Window, camera_transform: &GlobalTransform, c
 
 /// Display the price at the point where the cursor is pointing
 fn update_price_label(q_window: Query<&Window, With<PrimaryWindow>>, mut q_label: Query<&mut Text, With<Label>>, mut q_camera: Query<(&Camera, &GlobalTransform)>, shared: Res<Shared>) {
-	let (camera, camera_transform) = q_camera.single_mut();
-	let mut label = q_label.single_mut();
-	if let Some(y0_intersection) = cursor_y0_intersection(q_window.single(), camera_transform, camera) {
-		let price_under_cursor = shared.last_midprice + y0_intersection.x;
-		label.sections[0] = format!("dbg: {}\n{price_under_cursor}", y0_intersection).into();
+	if let Some(row_properties) = shared.first_row_properties {
+		let (camera, camera_transform) = q_camera.single_mut();
+		let mut label = q_label.single_mut();
+		match cursor_y0_intersection(q_window.single(), camera_transform, camera) {
+			Some(y0_intersection) => {
+				let price_under_cursor = row_properties.midprice + y0_intersection.x;
+				label.sections[0] = format!("dbg: {}\n{price_under_cursor}", y0_intersection).into();
+			}
+			None => {
+				label.sections[0] = "".into();
+			}
+		}
 	}
 }
 
@@ -102,41 +121,56 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		}
 		N_ROWS_DRAWN.fetch_add(1, Ordering::Relaxed);
 
-		shared.last_midprice = (bids.x[0] + asks.x[0]) / 2.;
-		let range = asks.x[asks.x.len() - 1] - bids.x[bids.x.len() - 1];
-		shared.last_row_width = range;
+		let current_row_properties = {
+			let mut sorted_ys: Vec<f32> = bids.y.clone();
+			sorted_ys.extend(&asks.y);
+			sorted_ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+			let std2_upper_bound = sorted_ys[(sorted_ys.len() as f32 * 0.95445) as usize];
+			RowProperties {
+				width: asks.x[asks.x.len() - 1] - bids.x[bids.x.len() - 1],
+				height_2std_upper: std2_upper_bound,
+				midprice: (bids.x[0] + asks.x[0]) / 2.,
+			}
+		};
 
-		// // it breaks if I move this after the closure def, because immutable borrow. What the fuck. // Is it because after this block the mutability of the reference is implicitly dropped?
-		let mut sorted_ys: Vec<f32> = bids.y.clone();
-		sorted_ys.extend(&asks.y);
-		sorted_ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
-		let std2_upper_bound = sorted_ys[(sorted_ys.len() as f32 * 0.95445) as usize];
+		let first_row_properties = match shared.first_row_properties {
+			None => {
+				shared.first_row_properties = Some(current_row_properties);
+				current_row_properties
+			}
+			Some(row_properties) => row_properties,
+		};
+		shared.last_row_properties = current_row_properties;
+
 		//let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
 		//let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
 		//shared.last_row_height = max_y_bids.max(*max_y_asks);
-		shared.last_row_height = std2_upper_bound;
-		//
+
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
 				material: material_handle,
-				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32).with_scale(Vec3::new(range / 1000., y, 1.)), //HACK: x scale could be shared
+				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32).with_scale(Vec3::new(first_row_properties.width / 1000., y, 1.)), //HACK: x scale could be shared
 				..default()
 			});
 		};
 
 		(0..bids.x.len()).for_each(|i| {
-			spawn_object(bids.x[i] - shared.last_midprice, bids.y[i], shared.bids_material_handle.clone());
+			spawn_object(bids.x[i] - first_row_properties.midprice, bids.y[i], shared.bids_material_handle.clone());
 		});
 		(0..asks.x.len()).for_each(|i| {
-			spawn_object(asks.x[i] - shared.last_midprice, asks.y[i], shared.asks_material_handle.clone());
+			spawn_object(asks.x[i] - first_row_properties.midprice, asks.y[i], shared.asks_material_handle.clone());
 		});
 
 		let camera = camera_query.single_mut();
 		let (_, mut transform) = camera;
 		let current_camera_pos = transform.translation;
 		if current_camera_pos.x == 0. {
-			transform.translation = Vec3::new(0., shared.last_row_height, shared.last_row_width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32);
+			transform.translation = Vec3::new(
+				0.,
+				current_row_properties.height_2std_upper,
+				current_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32,
+			); // asumes width is 1.
 		}
 	}
 }
@@ -158,9 +192,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		asks_material_handle: materials.add(Color::hsl(0.3, 0.5, 0.5)),
 		bids_material_handle: materials.add(Color::hsl(109.0, 0.97, 0.88)),
 		cuboid_mesh_handle: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
-		last_row_width: 0.,
-		last_row_height: 0.,
-		last_midprice: 0.,
+		first_row_properties: None,
+		last_row_properties: RowProperties::default(),
 	};
 	commands.insert_resource(shared);
 
@@ -192,7 +225,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		.with_children(|parent| {
 			parent.spawn((
 				TextBundle::from_section(
-					"target text",
+					"",
 					TextStyle {
 						font: asset_server.load(FONT),
 						..default()
