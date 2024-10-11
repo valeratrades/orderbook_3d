@@ -45,6 +45,11 @@ struct RowProperties {
 	height_2std_upper: f32,
 	midprice: f32,
 }
+impl RowProperties {
+	pub fn z_scale(&self) -> f32 {
+		self.height_2std_upper / 4.
+	}
+}
 
 //TODO!!: call at the end of drawing frames
 fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
@@ -55,7 +60,7 @@ fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_quer
 	transform.translation = Vec3::new(
 		shared.last_row_properties.midprice - first_row_properties.midprice,
 		shared.last_row_properties.height_2std_upper,
-		shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32,
+		shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * first_row_properties.z_scale(),
 	);
 	transform.look_at(Vec3::ZERO, Vec3::Y);
 	commands.entity(entity).insert(PanOrbitCamera::default());
@@ -141,6 +146,7 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			Some(row_properties) => row_properties,
 		};
 		shared.last_row_properties = current_row_properties;
+		let z_scale = first_row_properties.z_scale();
 
 		//let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
 		//let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
@@ -150,7 +156,7 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
 				material: material_handle,
-				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32).with_scale(Vec3::new(first_row_properties.width / 1000., y, 1.)), //HACK: x scale could be shared
+				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(first_row_properties.width / 1000., y, 1.)),
 				..default()
 			});
 		};
@@ -169,8 +175,8 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			transform.translation = Vec3::new(
 				0.,
 				current_row_properties.height_2std_upper,
-				current_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32,
-			); // asumes width is 1.
+				current_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale,
+			);
 		}
 	}
 }
