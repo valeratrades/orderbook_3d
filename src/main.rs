@@ -5,13 +5,7 @@ use std::{
 };
 
 use aggr_orderbook::{BookOrders, ListenBuilder, Market, Symbol};
-use bevy::{
-	color::palettes::css::WHITE,
-	input::common_conditions::input_just_pressed,
-	prelude::*,
-	render::camera::PerspectiveProjection,
-	window::PrimaryWindow,
-};
+use bevy::{color::palettes::css::WHITE, input::common_conditions::input_just_pressed, prelude::*, render::camera::PerspectiveProjection, window::PrimaryWindow};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use tokio::sync::mpsc;
 use v_utils::io::Percent;
@@ -19,7 +13,6 @@ use v_utils::io::Percent;
 static N_ROWS_DRAWN: AtomicUsize = AtomicUsize::new(0);
 static RANGE_MULTIPLIER: f32 = 1.5;
 static FONT: &str = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf";
-
 
 #[tokio::main]
 async fn main() {
@@ -113,10 +106,15 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		let range = asks.x[asks.x.len() - 1] - bids.x[bids.x.len() - 1];
 		shared.last_row_width = range;
 
-		// // it breaks if I move this after the closure def, because immutable borrow. What the fuck.
-		let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-		let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-		shared.last_row_height = max_y_bids.max(*max_y_asks);
+		// // it breaks if I move this after the closure def, because immutable borrow. What the fuck. // Is it because after this block the mutability of the reference is implicitly dropped?
+		let mut sorted_ys: Vec<f32> = bids.y.clone();
+		sorted_ys.extend(&asks.y);
+		sorted_ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+		let std2_upper_bound = sorted_ys[(sorted_ys.len() as f32 * 0.95445) as usize];
+		//let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		//let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		//shared.last_row_height = max_y_bids.max(*max_y_asks);
+		shared.last_row_height = std2_upper_bound;
 		//
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
