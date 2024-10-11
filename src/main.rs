@@ -6,12 +6,10 @@ use std::{
 
 use aggr_orderbook::{BookOrders, ListenBuilder, Market, Symbol};
 use bevy::{
-	color::palettes::css::{RED, WHITE},
+	color::palettes::css::WHITE,
 	input::common_conditions::input_just_pressed,
 	prelude::*,
 	render::camera::PerspectiveProjection,
-	sprite::Anchor,
-	text::{BreakLineOn, Text2dBounds},
 	window::PrimaryWindow,
 };
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
@@ -32,6 +30,7 @@ async fn main() {
 		.add_plugins(PanOrbitCameraPlugin)
 		.add_systems(Startup, setup)
 		.add_systems(Update, write_frame)
+		.add_systems(Update, update_price_label)
 		.add_systems(Update, center_camera.run_if(input_just_pressed(KeyCode::Escape)))
 		.add_systems(Update, set_rotation_center.run_if(input_just_pressed(KeyCode::Space)))
 		.run();
@@ -45,6 +44,7 @@ struct Shared {
 	cuboid_mesh_handle: Handle<Mesh>,
 	last_row_width: f32,
 	last_row_height: f32,
+	last_midprice: f32,
 }
 
 fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
@@ -57,23 +57,37 @@ fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_quer
 	commands.entity(entity).insert(PanOrbitCamera::default());
 }
 
-fn set_rotation_center(mut commands: Commands, q_window: Query<&Window, With<PrimaryWindow>>, mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>) {
+/// None if cursor is outside of the window or doesn't intersect with the Y0 plane
+fn cursor_y0_intersection(window: &Window, camera_transform: &GlobalTransform, camera: &Camera) -> Option<Vec3> {
+	let ray = match window.cursor_position().and_then(|cursor_pos| camera.viewport_to_world(camera_transform, cursor_pos)) {
+		Some(ray) => ray,
+		None => return None,
+	};
+
+	let distance_to_plane = match ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::default()) {
+		Some(distance) => distance,
+		None => return None,
+	};
+
+	let intersect_vec3 = ray.origin + ray.direction * distance_to_plane;
+	Some(intersect_vec3)
+}
+
+/// Display the price at the point where the cursor is pointing
+fn update_price_label(q_window: Query<&Window, With<PrimaryWindow>>, mut q_label: Query<&mut Text, With<Label>>, mut q_camera: Query<(&Camera, &GlobalTransform)>, shared: Res<Shared>) {
+	let (camera, camera_transform) = q_camera.single_mut();
+	let mut label = q_label.single_mut();
+	if let Some(y0_intersection) = cursor_y0_intersection(q_window.single(), camera_transform, camera) {
+		let price_under_cursor = shared.last_midprice + y0_intersection.x;
+		label.sections[0] = format!("dbg: {}\n{price_under_cursor}", y0_intersection).into();
+	}
+}
+
+fn set_rotation_center(commands: Commands, q_window: Query<&Window, With<PrimaryWindow>>, mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>) {
 	let (camera_entity, camera, mut panorbit, camera_transform) = q_camera.single_mut();
 
-	let window = q_window.single();
-
-	if let Some(ray) = window.cursor_position().and_then(|cursor| camera.viewport_to_world(camera_transform, cursor)) {
-		let ray_origin = ray.origin;
-		let distance_to_plane = match ray.intersect_plane(Vec3::ZERO, InfinitePlane3d::default()) {
-			Some(distance) => distance,
-			None => return,
-		};
-		let new_focus_target = ray_origin + ray.direction * distance_to_plane;
-
-		//- get current camera position and orientation
-		//- override the panorbit wtih same transform and new target_focus
-
-		panorbit.target_focus = new_focus_target;
+	if let Some(y0_intersection) = cursor_y0_intersection(q_window.single(), camera_transform, camera) {
+		panorbit.target_focus = y0_intersection;
 		panorbit.force_update = true;
 
 		//commands.entity(camera_entity).insert(PanOrbitCamera{
@@ -89,20 +103,21 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 	while let Ok(orders) = shared.receiver.try_recv() {
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
 		let (bids, asks) = orders.to_plottable(Some(p), true, true);
-		if bids.0.is_empty() && asks.0.is_empty() {
+		if bids.x.is_empty() && asks.x.is_empty() {
 			eprintln!("[WARN] Empty orderbook slice. Consider increasing the depth.");
 			continue;
 		}
 		N_ROWS_DRAWN.fetch_add(1, Ordering::Relaxed);
 
-		let mid_price = (bids.0[0] + asks.0[0]) / 2.;
-		let range = asks.0[asks.0.len() - 1] - bids.0[bids.0.len() - 1];
+		shared.last_midprice = (bids.x[0] + asks.x[0]) / 2.;
+		let range = asks.x[asks.x.len() - 1] - bids.x[bids.x.len() - 1];
 		shared.last_row_width = range;
 
-		let max_y_bids = bids.1.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-		let max_y_asks = asks.1.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		// // it breaks if I move this after the closure def, because immutable borrow. What the fuck.
+		let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+		let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
 		shared.last_row_height = max_y_bids.max(*max_y_asks);
-
+		//
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
@@ -112,11 +127,11 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			});
 		};
 
-		(0..bids.0.len()).for_each(|i| {
-			spawn_object(bids.0[i] - mid_price, bids.1[i], shared.bids_material_handle.clone());
+		(0..bids.x.len()).for_each(|i| {
+			spawn_object(bids.x[i] - shared.last_midprice, bids.y[i], shared.bids_material_handle.clone());
 		});
-		(0..asks.0.len()).for_each(|i| {
-			spawn_object(asks.0[i] - mid_price, asks.1[i], shared.asks_material_handle.clone());
+		(0..asks.x.len()).for_each(|i| {
+			spawn_object(asks.x[i] - shared.last_midprice, asks.y[i], shared.asks_material_handle.clone());
 		});
 
 		let camera = camera_query.single_mut();
@@ -147,6 +162,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 		cuboid_mesh_handle: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
 		last_row_width: 0.,
 		last_row_height: 0.,
+		last_midprice: 0.,
 	};
 	commands.insert_resource(shared);
 
@@ -187,20 +203,6 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 				Label,
 			));
 		});
-
-
-	// ruler
-	let ruler_width = 25.0;
-	let num_labels = 10;
-	let label_spacing = ruler_width / (num_labels as f32 - 1.0);
-	commands
-		.spawn(PbrBundle {
-			mesh: meshes.add(Cuboid::new(ruler_width, 0.1, 5.)),
-			material: materials.add(Color::srgb(0.8, 0.8, 0.8)),
-			transform: Transform::from_xyz(0.0, 0.0, -1.0),
-			..default()
-		})
-		.insert(Ruler);
 
 	std::thread::spawn(move || {
 		let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
