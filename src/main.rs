@@ -11,6 +11,8 @@ use tokio::sync::mpsc;
 use v_utils::io::Percent;
 
 static N_ROWS_DRAWN: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_POINTS_RENDERED: AtomicUsize = AtomicUsize::new(0);
+static MAX_POINTS_RENDERED: usize = 250_000; // although it can work somewhat fine with up to 1_000_000
 static RANGE_MULTIPLIER: f32 = 1.5;
 static FONT: &str = "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf";
 
@@ -118,13 +120,20 @@ fn set_rotation_center(commands: Commands, q_window: Query<&Window, With<Primary
 
 fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>) {
 	while let Ok(orders) = shared.receiver.try_recv() {
+		if TOTAL_POINTS_RENDERED.load(Ordering::Relaxed) > MAX_POINTS_RENDERED {
+			continue;
+		}
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
 		let (bids, asks) = orders.to_plottable(Some(p), true, true);
+		N_ROWS_DRAWN.fetch_add(1, Ordering::Relaxed);
+		TOTAL_POINTS_RENDERED.fetch_add(bids.x.len() + asks.x.len(), Ordering::Relaxed);
+		if TOTAL_POINTS_RENDERED.load(Ordering::Relaxed) > MAX_POINTS_RENDERED {
+			eprintln!("Rendered over {MAX_POINTS_RENDERED} points. No further data will be rendered.");
+		}
 		if bids.x.is_empty() && asks.x.is_empty() {
 			eprintln!("[WARN] Empty orderbook slice. Consider increasing the depth.");
 			continue;
 		}
-		N_ROWS_DRAWN.fetch_add(1, Ordering::Relaxed);
 
 		let current_row_properties = {
 			let mut sorted_ys: Vec<f32> = bids.y.clone();
@@ -138,6 +147,10 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			}
 		};
 
+		//- + split the range by tick_size
+		//- + scale ratio of filled space against empty along the lines of n*ln(n)
+		//- + scale everything by n_entries * ln(n_entries)
+
 		let first_row_properties = match shared.first_row_properties {
 			None => {
 				shared.first_row_properties = Some(current_row_properties);
@@ -147,10 +160,6 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		};
 		shared.last_row_properties = current_row_properties;
 		let z_scale = first_row_properties.z_scale();
-
-		//let max_y_bids = bids.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-		//let max_y_asks = asks.y.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-		//shared.last_row_height = max_y_bids.max(*max_y_asks);
 
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
