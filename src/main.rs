@@ -160,12 +160,13 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		};
 		shared.last_row_properties = current_row_properties;
 		let z_scale = first_row_properties.z_scale();
+		let order_width = first_row_properties.width / 1000.;
 
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
 				material: material_handle,
-				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(first_row_properties.width / 1000., y, 1.)),
+				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(order_width, y, z_scale * 0.95 /*leave small gaps for visual separation*/)),
 				..default()
 			});
 		};
