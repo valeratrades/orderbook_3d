@@ -46,10 +46,20 @@ struct RowProperties {
 	width: f32,
 	height_2std_upper: f32,
 	midprice: f32,
+	n_orders: usize,
 }
 impl RowProperties {
 	pub fn z_scale(&self) -> f32 {
 		self.height_2std_upper / 4.
+	}
+
+	pub fn x_scale(&self) -> f32 {
+		(self.n_orders as f32 + std::f32::consts::E).ln()
+	}
+
+	pub fn order_width_from_tick_size(&self, tick_size: f64) -> f32 {
+		let log_n = (self.n_orders as f64).ln();
+		(tick_size * log_n / (log_n + 1.0)) as f32 * 0.66 // scaling factor for easier visual separation
 	}
 }
 
@@ -124,7 +134,7 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			continue;
 		}
 		let p: v_utils::io::Percent = Percent::from_str("0.02%").unwrap();
-		let (bids, asks) = orders.to_plottable(Some(p), true, true);
+		let (bids, asks) = orders.to_plottable(Some(p), false, false);
 		N_ROWS_DRAWN.fetch_add(1, Ordering::Relaxed);
 		TOTAL_POINTS_RENDERED.fetch_add(bids.x.len() + asks.x.len(), Ordering::Relaxed);
 		if TOTAL_POINTS_RENDERED.load(Ordering::Relaxed) > MAX_POINTS_RENDERED {
@@ -140,16 +150,14 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			sorted_ys.extend(&asks.y);
 			sorted_ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
 			let std2_upper_bound = sorted_ys[(sorted_ys.len() as f32 * 0.95445) as usize];
+			let n_orders = bids.x.len() + asks.x.len();
 			RowProperties {
 				width: asks.x[asks.x.len() - 1] - bids.x[bids.x.len() - 1],
 				height_2std_upper: std2_upper_bound,
 				midprice: (bids.x[0] + asks.x[0]) / 2.,
+				n_orders,
 			}
 		};
-
-		//- + split the range by tick_size
-		//- + scale ratio of filled space against empty along the lines of n*ln(n)
-		//- + scale everything by n_entries * ln(n_entries)
 
 		let first_row_properties = match shared.first_row_properties {
 			None => {
@@ -160,9 +168,8 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		};
 		shared.last_row_properties = current_row_properties;
 		let z_scale = first_row_properties.z_scale();
-
-		//let order_width = first_row_properties.width / 1000.;
-		let order_width = order_width_from_tick_size(orders.tick_size, bids.x.len() + asks.x.len()); //dbg
+		let x_scale = first_row_properties.x_scale();
+		let order_width = first_row_properties.order_width_from_tick_size(orders.tick_size);
 
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
@@ -177,12 +184,15 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			});
 		};
 
-		(0..bids.x.len()).for_each(|i| {
-			spawn_object(bids.x[i] - first_row_properties.midprice, bids.y[i], shared.bids_material_handle.clone());
-		});
-		(0..asks.x.len()).for_each(|i| {
-			spawn_object(asks.x[i] - first_row_properties.midprice, asks.y[i], shared.asks_material_handle.clone());
-		});
+		let mut spawn_objects = |orders: aggr_orderbook::PlottableXy, material: &Handle<StandardMaterial>| {
+			(0..orders.x.len()).for_each(|i| {
+				let scaled_x_diff = (orders.x[i] - current_row_properties.midprice) * x_scale;
+				let baseline_offset = first_row_properties.midprice - current_row_properties.midprice;
+				spawn_object(baseline_offset + scaled_x_diff, orders.y[i], material.clone());
+			});
+		};
+		spawn_objects(bids, &shared.bids_material_handle);
+		spawn_objects(asks, &shared.asks_material_handle);
 
 		let camera = camera_query.single_mut();
 		let (_, mut transform) = camera;
@@ -195,11 +205,6 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			);
 		}
 	}
-}
-
-fn order_width_from_tick_size(tick_size: f64, n_orders: usize) -> f32 {
-	let log_n = (n_orders as f64).ln();
-	(tick_size * log_n / (log_n + 1.0)) as f32 * 0.75 // 0.75 for easier visual separation
 }
 
 //? potentially integrate with async_tasks on bevy or whatever is the most semantically correct way to do this
