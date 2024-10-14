@@ -171,26 +171,24 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		let x_scale = first_row_properties.x_scale();
 		let order_width = first_row_properties.order_width_from_tick_size(orders.tick_size);
 
-		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
-			commands.spawn(PbrBundle {
-				mesh: shared.cuboid_mesh_handle.clone(),
-				material: material_handle,
-				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(
-					order_width,
-					y,
-					z_scale * 0.95, /*leave small gaps for visual separation*/
-				)),
-				..default()
-			});
-		};
-
 		let mut spawn_objects = |orders: aggr_orderbook::PlottableXy, material: &Handle<StandardMaterial>| {
 			(0..orders.x.len()).for_each(|i| {
 				let scaled_x_diff = (orders.x[i] - current_row_properties.midprice) * x_scale;
 				let baseline_offset = first_row_properties.midprice - current_row_properties.midprice;
-				spawn_object(baseline_offset + scaled_x_diff, orders.y[i], material.clone());
+
+				commands.spawn(PbrBundle {
+					mesh: shared.cuboid_mesh_handle.clone(),
+					material: material.clone(),
+					transform: Transform::from_xyz(baseline_offset + scaled_x_diff, orders.y[i] / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(
+						order_width,
+						orders.y[i],
+						z_scale * 0.95, /*leave small gaps for visual separation*/
+					)),
+					..default()
+				});
 			});
 		};
+
 		spawn_objects(bids, &shared.bids_material_handle);
 		spawn_objects(asks, &shared.asks_material_handle);
 
@@ -283,8 +281,11 @@ mod tests {
 	#[test]
 	fn test_order_width_from_tick_size() {
 		let tick_size = 0.1;
-		let n_orders = 100;
-		let result = order_width_from_tick_size(tick_size, n_orders);
-		insta::assert_debug_snapshot!(result, @"0.082159325");
+		let row_properties = RowProperties {
+			n_orders: 100,
+			..Default::default()
+		};
+		let result = row_properties.order_width_from_tick_size(tick_size);
+		insta::assert_debug_snapshot!(result, @"0.054225158");
 	}
 }
