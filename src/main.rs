@@ -56,16 +56,16 @@ impl RowProperties {
 //TODO!!: call at the end of drawing frames
 fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
 	if let Some(first_row_properties) = shared.first_row_properties {
-	let camera = camera_query.single_mut();
-	let (entity, _, mut transform) = camera;
+		let camera = camera_query.single_mut();
+		let (entity, _, mut transform) = camera;
 
-	transform.translation = Vec3::new(
-		shared.last_row_properties.midprice - first_row_properties.midprice,
-		shared.last_row_properties.height_2std_upper,
-		shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * first_row_properties.z_scale(),
-	);
-	transform.look_at(Vec3::ZERO, Vec3::Y);
-	commands.entity(entity).insert(PanOrbitCamera::default());
+		transform.translation = Vec3::new(
+			shared.last_row_properties.midprice - first_row_properties.midprice,
+			shared.last_row_properties.height_2std_upper,
+			shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * first_row_properties.z_scale(),
+		);
+		transform.look_at(Vec3::ZERO, Vec3::Y);
+		commands.entity(entity).insert(PanOrbitCamera::default());
 	}
 }
 
@@ -160,13 +160,19 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		};
 		shared.last_row_properties = current_row_properties;
 		let z_scale = first_row_properties.z_scale();
-		let order_width = first_row_properties.width / 1000.;
+
+		//let order_width = first_row_properties.width / 1000.;
+		let order_width = order_width_from_tick_size(orders.tick_size, bids.x.len() + asks.x.len()); //dbg
 
 		let mut spawn_object = |x: f32, y: f32, material_handle: Handle<StandardMaterial>| {
 			commands.spawn(PbrBundle {
 				mesh: shared.cuboid_mesh_handle.clone(),
 				material: material_handle,
-				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(order_width, y, z_scale * 0.95 /*leave small gaps for visual separation*/)),
+				transform: Transform::from_xyz(x, y / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(
+					order_width,
+					y,
+					z_scale * 0.95, /*leave small gaps for visual separation*/
+				)),
 				..default()
 			});
 		};
@@ -189,6 +195,12 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 			);
 		}
 	}
+}
+
+/// Want: (tick_size - order_width) / order_width == 1 / log((n / CONSTANT))
+fn order_width_from_tick_size(tick_size: f64, n_orders: usize) -> f32 {
+	let log_n = (n_orders as f64).ln();
+	(tick_size * log_n / (log_n + 1.0)) as f32
 }
 
 //? potentially integrate with async_tasks on bevy or whatever is the most semantically correct way to do this
@@ -258,4 +270,17 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
 			book_listen(tx).await;
 		});
 	});
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_order_width_from_tick_size() {
+		let tick_size = 0.25;
+		let n_orders = 100;
+		let result = order_width_from_tick_size(tick_size, n_orders);
+		insta::assert_debug_snapshot!(result, @"0.20539832");
+	}
 }

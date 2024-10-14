@@ -23,3 +23,6 @@ color-eyre = "^0.6.3"
 derive-new = "^0.7.0"
 tokio = { version = "1.40.0", features = ["full"] }
 v_utils = { version = "1.7.3", features = ["io"], path = "/home/v/s/v_utils/v_utils" } #ga: rm path
+
+[dev-dependencies]
+insta = "1.40.0"
