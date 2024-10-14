@@ -197,10 +197,9 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 	}
 }
 
-/// Want: (tick_size - order_width) / order_width == 1 / log((n / CONSTANT))
 fn order_width_from_tick_size(tick_size: f64, n_orders: usize) -> f32 {
 	let log_n = (n_orders as f64).ln();
-	(tick_size * log_n / (log_n + 1.0)) as f32
+	(tick_size * log_n / (log_n + 1.0)) as f32 * 0.75 // 0.75 for easier visual separation
 }
 
 //? potentially integrate with async_tasks on bevy or whatever is the most semantically correct way to do this
@@ -278,9 +277,9 @@ mod tests {
 
 	#[test]
 	fn test_order_width_from_tick_size() {
-		let tick_size = 0.25;
+		let tick_size = 0.1;
 		let n_orders = 100;
 		let result = order_width_from_tick_size(tick_size, n_orders);
-		insta::assert_debug_snapshot!(result, @"0.20539832");
+		insta::assert_debug_snapshot!(result, @"0.082159325");
 	}
 }
