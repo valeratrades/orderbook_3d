@@ -57,26 +57,29 @@ impl RowProperties {
 		(self.n_orders as f32 + std::f32::consts::E).ln()
 	}
 
+	//? feels suboptimal. There must be a way to have this be more dynamic, and cover like up to 0.7, instead of having most variance come from the constant. Maybe I should have smaller log base?
 	pub fn order_width_from_tick_size(&self, tick_size: f64) -> f32 {
 		let log_n = (self.n_orders as f64).ln();
-		(tick_size * log_n / (log_n + 1.0)) as f32 * 0.66 // scaling factor for easier visual separation
+		(tick_size * log_n / (log_n + 1.0)) as f32 * 0.5 // scaling factor for easier visual separation
 	}
 }
 
-//TODO!!: call at the end of drawing frames
-fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut camera_query: Query<(Entity, &mut PanOrbitCamera, &mut Transform)>) {
+fn __center_camera(commands: &mut Commands, shared: &ResMut<Shared>, entity: Entity, transform: &mut Transform) { 
 	if let Some(first_row_properties) = shared.first_row_properties {
-		let camera = camera_query.single_mut();
-		let (entity, _, mut transform) = camera;
-
+		let x_pos  = shared.last_row_properties.midprice - first_row_properties.midprice;
 		transform.translation = Vec3::new(
-			shared.last_row_properties.midprice - first_row_properties.midprice,
+			x_pos,
 			shared.last_row_properties.height_2std_upper,
 			shared.last_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * first_row_properties.z_scale(),
 		);
-		transform.look_at(Vec3::ZERO, Vec3::Y);
+		transform.look_at(Vec3::new(x_pos, 0., 0.), Vec3::Y);
 		commands.entity(entity).insert(PanOrbitCamera::default());
 	}
+}
+
+fn center_camera(mut commands: Commands, shared: ResMut<Shared>, mut q_camera: Query<(Entity, &mut Transform), With<PanOrbitCamera>>) {
+		let (entity, mut transform) = q_camera.single_mut();
+		__center_camera(&mut commands, &shared, entity, &mut transform);
 }
 
 /// None if cursor is outside of the window or doesn't intersect with the Y0 plane
@@ -112,13 +115,15 @@ fn update_price_label(q_window: Query<&Window, With<PrimaryWindow>>, mut q_label
 	}
 }
 
-fn set_rotation_center(commands: Commands, q_window: Query<&Window, With<PrimaryWindow>>, mut q_camera: Query<(Entity, &Camera, &mut PanOrbitCamera, &GlobalTransform)>) {
-	let (camera_entity, camera, mut panorbit, camera_transform) = q_camera.single_mut();
+
+fn set_rotation_center(commands: Commands, q_window: Query<&Window, With<PrimaryWindow>>, mut q_camera: Query<(&Camera, &mut PanOrbitCamera, &GlobalTransform)>) {
+	let (camera, mut panorbit, camera_transform) = q_camera.single_mut();
 
 	if let Some(y0_intersection) = cursor_y0_intersection(q_window.single(), camera_transform, camera) {
 		panorbit.target_focus = y0_intersection;
 		panorbit.force_update = true;
 
+		// would need to take Entity in q_camera
 		//commands.entity(camera_entity).insert(PanOrbitCamera{
 		//	transform: camera_transform.clone(),
 		//	target_focus: new_focus_target,
@@ -128,7 +133,7 @@ fn set_rotation_center(commands: Commands, q_window: Query<&Window, With<Primary
 	}
 }
 
-fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_query: Query<(&Camera, &mut Transform), With<PanOrbitCamera>>) {
+fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut q_camera: Query<(Entity, &mut Transform), With<PanOrbitCamera>>) {
 	while let Ok(orders) = shared.receiver.try_recv() {
 		if TOTAL_POINTS_RENDERED.load(Ordering::Relaxed) > MAX_POINTS_RENDERED {
 			continue;
@@ -174,15 +179,16 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		let mut spawn_objects = |orders: aggr_orderbook::PlottableXy, material: &Handle<StandardMaterial>| {
 			(0..orders.x.len()).for_each(|i| {
 				let scaled_x_diff = (orders.x[i] - current_row_properties.midprice) * x_scale;
-				let baseline_offset = first_row_properties.midprice - current_row_properties.midprice;
+				let diff_from_init_midprice = current_row_properties.midprice - first_row_properties.midprice;
+				let z_pos = N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale;
 
 				commands.spawn(PbrBundle {
 					mesh: shared.cuboid_mesh_handle.clone(),
 					material: material.clone(),
-					transform: Transform::from_xyz(baseline_offset + scaled_x_diff, orders.y[i] / 2., N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale).with_scale(Vec3::new(
-						order_width,
+					transform: Transform::from_xyz(scaled_x_diff - diff_from_init_midprice, orders.y[i] / 2.,z_pos).with_scale(Vec3::new(
+						order_width * x_scale,
 						orders.y[i],
-						z_scale * 0.95, /*leave small gaps for visual separation*/
+						z_scale * 0.9, /*leave small gaps for visual separation*/
 					)),
 					..default()
 				});
@@ -192,15 +198,11 @@ fn write_frame(mut commands: Commands, mut shared: ResMut<Shared>, mut camera_qu
 		spawn_objects(bids, &shared.bids_material_handle);
 		spawn_objects(asks, &shared.asks_material_handle);
 
-		let camera = camera_query.single_mut();
-		let (_, mut transform) = camera;
-		let current_camera_pos = transform.translation;
-		if current_camera_pos.x == 0. {
-			transform.translation = Vec3::new(
-				0.,
-				current_row_properties.height_2std_upper,
-				current_row_properties.width * RANGE_MULTIPLIER + N_ROWS_DRAWN.load(Ordering::SeqCst) as f32 * z_scale,
-			);
+		let (entity, mut camera_transform) = q_camera.single_mut();
+		let current_camera_pos = camera_transform.translation;
+		// it's f32, so this gets off course very quickly
+		if current_camera_pos.x == current_row_properties.midprice - first_row_properties.midprice {
+			__center_camera(&mut commands, &shared, entity, &mut camera_transform);
 		}
 	}
 }
@@ -212,8 +214,8 @@ async fn book_listen(tx: mpsc::Sender<BookOrders>) {
 	unreachable!();
 }
 
-#[derive(Debug, Default, Component)]
-struct Ruler;
+//#[derive(Debug, Default, Component)]
+//struct Ruler;
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, asset_server: Res<AssetServer>) {
 	let (tx, rx) = mpsc::channel(65536);
